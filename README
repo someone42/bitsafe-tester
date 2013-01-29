@@ -1,0 +1,38 @@
+Firmware for functional-level testing of completed BitSafe (a hardware Bitcoin
+wallet) development boards.
+
+
+
+Expected outcomes:
+
+USB connection: the DUT should power up and enumerate as a USB HID device when
+plugged into a USB host.
+
+RGB LEDs: should flash in a RGB sequence when the DUT is powered up. Each LED
+should be on for about 0.25 s. The sequence will speed up whenever there is
+USB activity.
+
+Pushbuttons: the pushbuttons can be used to cycle through the tests. The
+button on the right will advance to the next test, while the button on the
+left will go back to the previous test. If the DUT does not respond to
+pushbutton presses, then it is likely that there is an issue with one of
+the pushbuttons.
+
+SSD1306-based OLED display: should display something. Since the hardware
+interface is write-only, the only indication of failure is nothing appearing
+on the display.
+
+External memory (SST25VF080B): the JEDEC ID of the chip will be queried. For
+the SST25VF080B, this should be bf258e (according to the datasheet). The
+firmware will also perform an erase-program-read cycle on the first 4K sector
+of the external memory, and should report "pass" if everything went as
+expected. Erase and program failures are indicated by "erase failed" and
+"verify failed" respectively.
+
+Atmel CryptoAuthentication (ATSHA204):
+
+Hardware noise source: should display the mean and RMS amplitude of the noise
+source. The mean should be near 1650 mV. The RMS amplitude depends on the
+noise source used. For thermal noise, this should be near 135 mV. If the
+RMS amplitude is huge (> 1000 mV) or tiny (< 10 mV), then something is
+definitely wrong with the noise source.
