@@ -29,7 +29,13 @@ of the external memory, and should report "pass" if everything went as
 expected. Erase and program failures are indicated by "erase failed" and
 "verify failed" respectively.
 
-Atmel CryptoAuthentication (ATSHA204):
+Atmel CryptoAuthentication (ATSHA204): should wake up (indicated by "Wake
+test: pass") and display the first 12 bytes of the output of a sample of the
+internal hardware random number generator. Note that if the ATSHA204 is
+in an unlocked state, then as per its datasheet, the random number generator
+will return ffff0000ffff0000ffff0000. If "Wake test: fail" or "Random: error"
+appears, there is probably some sort of communication error (likely related
+to timing).
 
 Hardware noise source: should display the mean and RMS amplitude of the noise
 source. The mean should be near 1650 mV. The RMS amplitude depends on the

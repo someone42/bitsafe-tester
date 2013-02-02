@@ -16,6 +16,7 @@
       <itemPath>../pushbuttons.h</itemPath>
       <itemPath>../sst25x.h</itemPath>
       <itemPath>../adc.h</itemPath>
+      <itemPath>../atsha204.h</itemPath>
     </logicalFolder>
     <logicalFolder name="LinkerScript"
                    displayName="Linker Files"
@@ -39,6 +40,8 @@
       <itemPath>../pushbuttons.c</itemPath>
       <itemPath>../sst25x.c</itemPath>
       <itemPath>../adc.c</itemPath>
+      <itemPath>../atsha204.c</itemPath>
+      <itemPath>../atsha204_bitbang.S</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"

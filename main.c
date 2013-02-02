@@ -18,6 +18,7 @@
 #include "sst25x.h"
 #include "adc.h"
 #include "pushbuttons.h"
+#include "atsha204.h"
 
 /** Total number of tests. */
 #define NUM_TESTS		4
@@ -56,6 +57,7 @@ int main(void)
 	initSSD1306();
 	initPushButtons();
 	initSST25x();
+	initATSHA204();
 	initADC();
 	usbInit();
 	usbHIDStreamInit();
@@ -89,7 +91,7 @@ int main(void)
 		}
 		else if (test_number == 2)
 		{
-			writeStringToDisplayWordWrap("Not implemented yet");
+			testATSHA204();
 		}
 		else if (test_number == 3)
 		{

@@ -109,16 +109,28 @@ void __attribute__((nomips16)) delayCyclesAndIdle(uint32_t num_cycles)
 	} while ((current_count - start_count) < num_cycles);
 }
 
-/** Initialise caching module. */
-static void prefetchInit(void)
+/** Initialise caching module and set up CPU for instruction caching. */
+static void __attribute__ ((nomips16)) prefetchInit(void)
 {
+	uint32_t config1;
+
 	// Set 1 wait state. This is okay for CPU operation from 0 to 60 MHz.
 	CHECONbits.PFMWS = 1;
-	// Enable predictive caching for all regions (cacheable and uncacheable).
+	// Enable predictive caching for cacheable regions only.
 	// This eliminates flash wait states for sequential code.
-	CHECONbits.PREFEN = 3;
+	// TODO: Maybe don't do this because of that CPU cache errata?
+	CHECONbits.PREFEN = 1;
 	// Disable data caching.
 	CHECONbits.DCSZ = 0;
+	// Enable cacheability of kseg0 (it's turned off by default).
+	// See section 2.12.13 of the PIC32 family reference manual (revision E),
+	// obtained from
+	// http://ww1.microchip.com/downloads/en/DeviceDoc/61113E.pdf on
+	// 6 November 2012.
+	asm volatile("mfc0 %0, $16, 0" : "=r"(config1));
+	config1 &= ~0x00000007; // mask out K0
+	config1 |= 0x00000003; // set K0 = 3 (cacheable)
+	asm volatile("mtc0 %0, $16, 0" : : "r"(config1));
 }
 
 /** Enter PIC32 idle mode to conserve power. The CPU will leave idle mode when
