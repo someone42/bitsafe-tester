@@ -17,10 +17,10 @@
 #define SAMPLE_BUFFER_SIZE		4096
 
 extern volatile uint16_t adc_sample_buffer[SAMPLE_BUFFER_SIZE];
-extern volatile int sample_buffer_full;
 
 extern void initADC(void);
 extern void beginFillingADCBuffer(void);
+extern int isADCBufferFull(void);
 extern void testADC(void);
 
 #endif // #ifndef PIC32_ADC_H_INCLUDED

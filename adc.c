@@ -3,19 +3,19 @@
   * \brief Driver for the PIC32's analog-to-digital converter (ADC).
   *
   * Analog-to-digital conversions are initiated by Timer3, so that the rate
-  * of conversions is about 22.05 kHz. This sample rate was chosen because
+  * of conversions is about 24 kHz. This sample rate was chosen because
   * it's a "standard" audio sample rate, so most audio programs can handle
   * PCM data at that rate. It's slow enough that the code in fft.c can handle
   * real-time FFTs at that sample rate. Conversions are done with a fixed
   * period in between each conversion so that the results of FFTs are
   * meaningful.
   *
-  * The results of conversions go into #adc_sample_buffer. To begin a series
-  * of conversions, call beginFillingADCBuffer(), then wait
-  * until #sample_buffer_full is non-zero. #adc_sample_buffer will then
-  * contain #SAMPLE_BUFFER_SIZE samples. This interface allows one buffer of
-  * samples to be collected while the previous one is processed, which speeds
-  * up entropy collection.
+  * The results of conversions are written into #adc_sample_buffer using DMA
+  * transfers. To begin a series of conversions, call beginFillingADCBuffer(),
+  * then wait until isADCBufferFull() returns a non-zero
+  * value. #adc_sample_buffer will then contain #SAMPLE_BUFFER_SIZE samples.
+  * This interface allows one buffer of samples to be collected while the
+  * previous one is processed, which speeds up entropy collection.
   *
   * For details on hardware interfacing requirements, see initADC().
   *
@@ -35,20 +35,34 @@
 #include "pic32_system.h"
 #include "ssd1306.h"
 
-/** A place to store samples from the ADC. When #sample_buffer_full is
-  * non-zero, every entry in this array will be filled with ADC samples
+/** A place to store samples from the ADC. When isADCBufferFull() returns
+  * a non-zero value, every entry in this array will be filled with ADC samples
   * taken periodically. */
 volatile uint16_t adc_sample_buffer[SAMPLE_BUFFER_SIZE];
-/** Index into #sample_buffer where the next sample will be written. */
-static volatile uint32_t sample_buffer_current_index;
-/** This will be zero if #sample_buffer is not full. This will be non-zero
-  * if #sample_buffer is full. */
-volatile int sample_buffer_full;
 
 /** Set up the PIC32 ADC to sample from AN2 periodically using Timer3 as the
-  * trigger. */
+  * trigger. DMA is used to move the ADC result into #adc_sample_buffer. */
 void initADC(void)
 {
+	// Initialise DMA module and DMA channel 0.
+	// Why use DMA? DMA transfers will continue even when interrupts are
+	// disabled, making sampling more robust (especially against USB
+	// activity). DMA transfers also introduce less interference into the
+	// signal, compared to using an interrupt service handler.
+	DMACONbits.ON = 0; // disable DMA controller
+	asm("nop"); // just to be safe
+	IEC1bits.DMA0IE = 0; // disable DMA channel 0 interrupt
+	IFS1bits.DMA0IF = 0; // clear DMA channel 0 interrupt flag
+	DMACONbits.ON = 1; // enable DMA controller
+	DMACONbits.SUSPEND = 0; // disable DMA suspend
+	DCH0CON = 0;
+	DCH0CONbits.CHPRI = 3; // priority = highest
+	DCH0ECON = 0;
+	DCH0ECONbits.CHSIRQ = _ADC_IRQ; // start transfer on ADC interrupt
+	DCH0ECONbits.SIRQEN = 1; // start cell transfer on IRQ
+	DCH0INTCLR = 0x00ff00ff; // clear existing events, disable all interrupts
+
+	// Initialise ADC module.
 	AD1CON1bits.ON = 0; // turn ADC module off
 	asm("nop"); // just to be safe
 	// This follows section 17.4 of the PIC32 family reference manual.
@@ -63,24 +77,23 @@ void initADC(void)
 	AD1CON1bits.ASAM = 1; // enable automatic sampling
 	AD1CON2bits.VCFG = 0; // use AVdd/AVss as references
 	AD1CON2bits.CSCNA = 0; // disable scan mode
-	AD1CON2bits.SMPI = 7; // 8 samples per interrupt
-	AD1CON2bits.BUFM = 1; // double buffer mode
+	AD1CON2bits.SMPI = 0; // 1 sample per interrupt
+	AD1CON2bits.BUFM = 0; // single buffer mode
 	AD1CON2bits.ALTS = 0; // disable alternate mode (always use MUX A)
 	AD1CON3bits.ADRC = 0; // derive ADC conversion clock from PBCLK
 	// Don't need to set SAMC since ADC is not in auto-convert (continuous)
 	// mode.
-	AD1CON3bits.SAMC = 12; // sample time = 12 ADC conversion clocks
+	//AD1CON3bits.SAMC = 12; // sample time = 12 ADC conversion clocks
 	AD1CON3bits.ADCS = 14; // ADC conversion clock = 1.2 MHz
 	AD1CON1bits.SIDL = 1; // discontinue operation in idle mode
 	AD1CON1bits.CLRASAM = 0; // don't clear ASAM; overwrite buffer contents
 	AD1CON1bits.SAMP = 0; // don't start sampling immediately
 	AD1CON2bits.OFFCAL = 0; // disable offset calibration mode
 	AD1CON1bits.ON = 1; // turn ADC module on
-	IPC6bits.AD1IP = 3; // priority level = 3
-	IPC6bits.AD1IS = 0; // sub-priority level = 0
 	IFS1bits.AD1IF = 0; // clear interrupt flag
-	IEC1bits.AD1IE = 1; // enable interrupt
+	IEC1bits.AD1IE = 0; // disable interrupt
 	delayCycles(144); // wait 4 microsecond for ADC to stabilise
+
 	// Initialise Timer3 to trigger ADC conversions.
 	T3CONbits.ON = 0; // turn timer off
 	T3CONbits.SIDL = 0; // continue operation in idle mode
@@ -88,83 +101,57 @@ void initADC(void)
 	T3CONbits.TGATE = 0; // disable gated time accumulation
 	T3CONbits.SIDL = 0; // continue in idle mode
 	TMR3 = 0; // clear count
-	PR3 = 1633; // frequency = about 22045 Hz
+	PR3 = 1500; // frequency = 24000 Hz
 	IFS0bits.T3IF = 0; // clear interrupt flag
 	IEC0bits.T3IE = 0; // disable timer interrupt
-}
-
-/** Insert new sample into ADC sample buffer (#adc_sample_buffer).
-  * \param sample The sample to insert.
-  */
-static void insertSample(uint32_t sample)
-{
-	sample &= 0x3ff;
-	if (sample_buffer_current_index >= SAMPLE_BUFFER_SIZE)
-	{
-		T3CONbits.ON = 0; // turn timer off
-		sample_buffer_full = 1;
-	}
-	else
-	{
-		adc_sample_buffer[sample_buffer_current_index] = (uint16_t)sample;
-		sample_buffer_current_index++;
-	}
-}
-
-/** Interrupt handler that is called whenever an analog-to-digital conversion
-  * is complete. The priority level is set to 3 so that this can interrupt
-  * USB interrupts. */
-void __attribute__((vector(_ADC_VECTOR), interrupt(ipl3), nomips16)) _ADCHandler(void)
-{
-	if (AD1CON2bits.BUFS == 0)
-	{
-		// ADC is currently filling buffers 0 - 7.
-		insertSample(ADC1BUF8);
-		insertSample(ADC1BUF9);
-		insertSample(ADC1BUFA);
-		insertSample(ADC1BUFB);
-		insertSample(ADC1BUFC);
-		insertSample(ADC1BUFD);
-		insertSample(ADC1BUFE);
-		insertSample(ADC1BUFF);
-	}
-	else
-	{
-		// ADC is currently filling buffers 8 - 15.
-		insertSample(ADC1BUF0);
-		insertSample(ADC1BUF1);
-		insertSample(ADC1BUF2);
-		insertSample(ADC1BUF3);
-		insertSample(ADC1BUF4);
-		insertSample(ADC1BUF5);
-		insertSample(ADC1BUF6);
-		insertSample(ADC1BUF7);
-	}
-	// The following interrupt flag can only be cleared after reading ADC1BUFx.
-	// See the note at the bottom of section 17.7 of the PIC32 family
-	// reference manual.
-	IFS1bits.AD1IF = 0; // clear interrupt flag
+	T3CONbits.ON = 1; // turn timer on
 }
 
 /** Begin collecting #SAMPLE_BUFFER_SIZE samples, filling
   * up #adc_sample_buffer. This will return before all the samples have been
   * collected, allowing the caller to do something else while samples are
-  * collected in the background. #sample_buffer_full can be used to indicate
+  * collected in the background. isADCBufferFull() can be used to determine
   * when #adc_sample_buffer is full.
   *
   * It is okay to call this while the sample buffer is still being filled up.
-  * In that case, calling this will reset #sample_buffer_current_index so that
-  * the sample buffer will commence filling from the start.
+  * In that case, calling this will abort the current fill and commence
+  * filling from the start.
   */
 void beginFillingADCBuffer(void)
 {
 	uint32_t status;
 
 	status = disableInterrupts();
-	sample_buffer_current_index = 0;
-	sample_buffer_full = 0;
-	T3CONbits.ON = 1; // turn timer on
+	DCH0CONbits.CHEN = 0; // disable channel
+	asm("nop"); // just to be safe
+	DCH0ECONbits.CABORT = 1; // abort any existing transfer and reset pointers
+	// Delay a couple of cycles, just to be safe. DMA transfers are observed
+	// to require up to 7 cycles (depending on source/destination alignment).
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	asm("nop");
+	DCH0ECONbits.CABORT = 0;
+	DCH0INTCLR = 0x00ff00ff; // clear existing events, disable all interrupts
+	DCH0SSA = VIRTUAL_TO_PHYSICAL(&ADC1BUF0); // transfer source physical address
+	DCH0DSA = VIRTUAL_TO_PHYSICAL(&adc_sample_buffer); // transfer destination physical address
+	DCH0SSIZ = sizeof(uint16_t); // source size
+	DCH0DSIZ = sizeof(adc_sample_buffer); // destination size
+	DCH0CSIZ = sizeof(uint16_t); // cell size (bytes transferred per event)
+	DCH0CONbits.CHEN = 1; // enable channel
 	restoreInterrupts(status);
+}
+
+/** Check whether ADC buffer (#adc_sample_buffer) is full.
+  * \return 0 if ADC buffer is not full, non-zero if it is.
+  */
+int isADCBufferFull(void)
+{
+	return DCH0INTbits.CHBCIF;
 }
 
 /** Test ADC (and implicitly, the hardware noise source) by displaying some
@@ -179,7 +166,7 @@ void testADC(void)
 
 	// Fill the sample buffer.
 	beginFillingADCBuffer();
-	while(sample_buffer_full == 0)
+	while(isADCBufferFull() == 0)
 	{
 		// do nothing
 	}
