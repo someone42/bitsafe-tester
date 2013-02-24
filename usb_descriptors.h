@@ -122,7 +122,7 @@ DESCRIPTOR_ENDPOINT, // descriptor type
 0x81, // endpoint number; bit 7 set means IN, endpoint 1
 0x03, // attributes (3 = interrupt transfers)
 0x40, 0x00, // maximum packet size of this endpoint in bytes (little-endian)
-0x0a, // polling interval, in millisecond
+0x01, // polling interval, in millisecond
 #ifndef NO_INTERRUPT_OUT
 // Endpoint 2 descriptor:
 0x07, // length of this descriptor in bytes
